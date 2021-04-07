@@ -68,9 +68,6 @@ class Disk(Geometry):
         X = np.hstack((np.cos(theta), np.sin(theta)))
         return self.radius * X + self.center
 
-    def periodic_point(self, x, component):
-        return x
-
     def background_points(self, x, dirn, dist2npt, shift):
         dirn = dirn / np.linalg.norm(dirn)
         dx = self.distance2boundary_unitdirn(x, -dirn)
@@ -138,9 +135,9 @@ class Rectangle(Hypercube):
                 [self.xmin[0], self.xmax[1]],
             )
         )
+        if n <= 4:
+            return x_corner[np.random.choice(4, size=n, replace=False)]
         n -= 4
-        if n <= 0:
-            return x_corner
 
         l1 = self.xmax[0] - self.xmin[0]
         l2 = l1 + self.xmax[1] - self.xmin[1]
@@ -165,22 +162,52 @@ class Rectangle(Hypercube):
                 x.append([self.xmin[0], self.xmax[1] - l + l3])
         return np.vstack((x_corner, x))
 
+    @staticmethod
+    def is_valid(vertices):
+        """Check if the geometry is a Rectangle.
+        """
+        return (
+            len(vertices) == 4
+            and np.isclose(np.prod(vertices[1] - vertices[0]), 0)
+            and np.isclose(np.prod(vertices[2] - vertices[1]), 0)
+            and np.isclose(np.prod(vertices[3] - vertices[2]), 0)
+            and np.isclose(np.prod(vertices[0] - vertices[3]), 0)
+        )
+
 
 class Triangle(Geometry):
+    """Triangle.
+
+    The order of vertices can be in a clockwise or counterclockwise direction.
+    The vertices will be re-ordered in counterclockwise (right hand rule).
+    """
+
     def __init__(self, x1, x2, x3):
+        self.area = polygon_signed_area([x1, x2, x3])
+        # Clockwise
+        if self.area < 0:
+            self.area = -self.area
+            x2, x3 = x3, x2
+
         self.x1 = np.array(x1)
         self.x2 = np.array(x2)
         self.x3 = np.array(x3)
+
         self.v12 = self.x2 - self.x1
         self.v23 = self.x3 - self.x2
         self.v31 = self.x1 - self.x3
+        self.v13 = -self.v31
         self.l12 = np.linalg.norm(self.v12)
         self.l23 = np.linalg.norm(self.v23)
         self.l31 = np.linalg.norm(self.v31)
         self.n12 = self.v12 / self.l12
         self.n23 = self.v23 / self.l23
         self.n31 = self.v31 / self.l31
+        self.n12_normal = clockwise_rotation_90(self.n12)
+        self.n23_normal = clockwise_rotation_90(self.n23)
+        self.n31_normal = clockwise_rotation_90(self.n31)
         self.perimeter = self.l12 + self.l23 + self.l31
+
         super(Triangle, self).__init__(
             2,
             (np.minimum(x1, np.minimum(x2, x3)), np.maximum(x1, np.maximum(x2, x3))),
@@ -195,6 +222,46 @@ class Triangle(Geometry):
             )
             ** 0.5,
         )
+
+        # Used in inside()
+        self._detv1v2 = np.cross(self.v12, self.v13)
+        self._detv0v1 = np.cross(self.x1, self.v12)
+        self._detv0v2 = np.cross(self.x1, self.v13)
+
+    def inside(self, x):
+        """Barycentric method
+
+        https://mathworld.wolfram.com/TriangleInterior.html
+        """
+        a = (np.cross(x, self.v13) - self._detv0v2) / self._detv1v2
+        if 0 <= a <= 1:
+            b = (self._detv0v1 - np.cross(x, self.v12)) / self._detv1v2
+            if b >= 0 and a + b <= 1:
+                return True
+        return False
+
+    def on_boundary(self, x):
+        l1 = np.linalg.norm(x - self.x1)
+        l2 = np.linalg.norm(x - self.x2)
+        l3 = np.linalg.norm(x - self.x3)
+        return np.any(
+            np.isclose([l1 + l2 - self.l12, l2 + l3 - self.l23, l3 + l1 - self.l31], 0)
+        )
+
+    def boundary_normal(self, x):
+        l1 = np.linalg.norm(x - self.x1)
+        l2 = np.linalg.norm(x - self.x2)
+        if np.isclose(l1 + l2, self.l12):
+            return self.n12_normal
+
+        l3 = np.linalg.norm(x - self.x3)
+        if np.isclose(l2 + l3, self.l23):
+            return self.n23_normal
+
+        if np.isclose(l3 + l1, self.l31):
+            return self.n31_normal
+
+        return np.array([0, 0])
 
     def random_points(self, n, random="pseudo"):
         """There are two methods for triangle point picking.
@@ -249,9 +316,9 @@ class Triangle(Geometry):
 
     def random_boundary_points(self, n, random="pseudo"):
         x_corner = np.vstack((self.x1, self.x2, self.x3))
+        if n <= 3:
+            return x_corner[np.random.choice(3, size=n, replace=False)]
         n -= 3
-        if n <= 0:
-            return x_corner
 
         if random == "sobol":
             u = np.ravel(sobol_sequence.sample(n + 3, 1))[1:]
@@ -281,6 +348,11 @@ class Polygon(Geometry):
 
     def __init__(self, vertices):
         self.vertices = np.array(vertices)
+        if len(vertices) == 3:
+            raise ValueError("The polygon is a triangle. Use Triangle instead.")
+        if Rectangle.is_valid(self.vertices):
+            raise ValueError("The polygon is a rectangle. Use Rectangle instead.")
+
         self.diagonals = spatial.distance.squareform(
             spatial.distance.pdist(self.vertices)
         )
@@ -366,9 +438,11 @@ class Polygon(Geometry):
         return x
 
     def random_boundary_points(self, n, random="pseudo"):
+        if n <= self.nvertices:
+            return self.vertices[
+                np.random.choice(len(self.vertices), size=n, replace=False)
+            ]
         n -= self.nvertices
-        if n <= 0:
-            return self.vertices
 
         if random == "sobol":
             u = np.ravel(sobol_sequence.sample(n + self.nvertices, 1))[1:]
@@ -396,6 +470,23 @@ class Polygon(Geometry):
         return np.vstack((self.vertices, x))
 
 
+def polygon_signed_area(vertices):
+    """The (signed) area of a simple polygon.
+
+    Shoelace formula: https://en.wikipedia.org/wiki/Shoelace_formula
+    """
+    x, y = zip(*vertices)
+    x = np.array(list(x) + [x[0]])
+    y = np.array(list(y) + [y[0]])
+    return 0.5 * (np.sum(x[:-1] * y[1:]) - np.sum(x[1:] * y[:-1]))
+
+
+def clockwise_rotation_90(v):
+    """Rotate a vector of 90 degrees clockwise about the origin.
+    """
+    return np.array([v[1], -v[0]])
+
+
 def is_left(P0, P1, P2):
     """Test if a point is Left|On|Right of an infinite line.
     See: the January 2001 Algorithm "Area of 2D and 3D Triangles and Polygons".
@@ -409,3 +500,18 @@ def is_left(P0, P1, P2):
         >0 if P2 left of the line through P0 and P1, =0 if P2 on the line, <0 if P2 right of the line.
     """
     return (P1[0] - P0[0]) * (P2[1] - P0[1]) - (P2[0] - P0[0]) * (P1[1] - P0[1])
+
+
+def is_rectangle(vertices):
+    """Check if the geometry is a rectangle.
+    https://stackoverflow.com/questions/2303278/find-if-4-points-on-a-plane-form-a-rectangle/2304031
+
+    1. Find the center of mass of corner points: cx=(x1+x2+x3+x4)/4, cy=(y1+y2+y3+y4)/4
+    2. Test if square of distances from center of mass to all 4 corners are equal
+    """
+    if len(vertices) == 4:
+        return True
+
+    c = np.mean(vertices, axis=0)
+    d = np.sum((vertices - c) ** 2, axis=1)
+    return np.allclose(d, np.full(4, d[0]))

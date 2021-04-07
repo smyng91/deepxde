@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import inspect
 import sys
 import time
 from functools import wraps
@@ -9,8 +10,9 @@ from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
-import tensorflow as tf
 from matplotlib import animation
+
+from .backend import tf
 
 
 def run_if_all_none(*attr):
@@ -145,3 +147,24 @@ def _save_animation(filename, xdata, ydata, y_reference=None, logy=False):
     )
     ani.save(filename, writer="imagemagick", fps=30)
     plt.close()
+
+
+def list_to_str(nums, precision=2):
+    if nums is None:
+        return ""
+    if not isinstance(nums, (list, tuple, np.ndarray)):
+        return "{:.{}e}".format(nums, precision)
+    return "[{:s}]".format(", ".join(["{:.{}e}".format(x, precision) for x in nums]))
+
+
+def get_num_args(func):
+    """Get the number of arguments of a Python function.
+
+    References:
+
+        - https://stackoverflow.com/questions/847936/how-can-i-find-the-number-of-arguments-of-a-python-function
+    """
+    if sys.version_info[0] == 2:
+        return len(inspect.getargspec(func).args)
+    sig = inspect.signature(func)
+    return len(sig.parameters)

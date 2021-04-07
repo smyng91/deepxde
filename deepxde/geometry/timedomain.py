@@ -43,15 +43,18 @@ class GeometryXTime(object):
         Time volume ~ diam.
         """
         nx = int(
-            (
-                n
-                * np.prod(self.geometry.bbox[1] - self.geometry.bbox[0])
-                / self.timedomain.diam
+            np.ceil(
+                (
+                    n
+                    * np.prod(self.geometry.bbox[1] - self.geometry.bbox[0])
+                    / self.timedomain.diam
+                )
+                ** 0.5
             )
-            ** 0.5
         )
         nt = int(np.ceil(n / nx))
         x = self.geometry.uniform_points(nx, boundary=boundary)
+        nx = len(x)
         if boundary:
             t = self.timedomain.uniform_points(nt, boundary=True)
         else:
@@ -97,6 +100,7 @@ class GeometryXTime(object):
             nx = int((n * s / self.timedomain.diam) ** 0.5)
         nt = int(np.ceil(n / nx))
         x = self.geometry.uniform_boundary_points(nx)
+        nx = len(x)
         t = np.linspace(
             self.timedomain.t1,
             self.timedomain.t0,
@@ -122,7 +126,11 @@ class GeometryXTime(object):
     def uniform_initial_points(self, n):
         x = self.geometry.uniform_points(n, True)
         t = self.timedomain.t0
-        return np.hstack((x, np.full([n, 1], t)))
+        if n != len(x):
+            print(
+                "Warning: {} points required, but {} points sampled.".format(n, len(x))
+            )
+        return np.hstack((x, np.full([len(x), 1], t)))
 
     def random_initial_points(self, n, random="pseudo"):
         x = self.geometry.random_points(n, random=random)
@@ -130,5 +138,5 @@ class GeometryXTime(object):
         return np.hstack((x, np.full([n, 1], t)))
 
     def periodic_point(self, x, component):
-        xp = self.geometry.periodic_point(x[:-1])
+        xp = self.geometry.periodic_point(x[:-1], component)
         return np.append(xp, x[-1])

@@ -3,7 +3,10 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
+
+from . import backend
+from . import external_optimizer
+from .backend import tf
 
 
 def is_scipy_opts(optimizer):
@@ -13,9 +16,13 @@ def is_scipy_opts(optimizer):
 
 def get_train_op(loss, optimizer, lr=None, decay=None):
     if is_scipy_opts(optimizer):
+        if backend.is_tf_1():
+            ScipyOptimizerInterface = tf.contrib.opt.ScipyOptimizerInterface
+        else:
+            ScipyOptimizerInterface = external_optimizer.ScipyOptimizerInterface
         if lr is not None or decay is not None:
             print("Warning: learning rate is ignored for {}".format(optimizer))
-        return tf.contrib.opt.ScipyOptimizerInterface(
+        return ScipyOptimizerInterface(
             loss,
             method=optimizer,
             options={

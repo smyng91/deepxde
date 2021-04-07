@@ -4,26 +4,23 @@ from __future__ import print_function
 
 import matplotlib.pyplot as plt
 import numpy as np
+from mpl_toolkits.mplot3d import Axes3D
 
 
 def saveplot(losshistory, train_state, issave=True, isplot=True):
+    if issave:
+        save_loss_history(losshistory, "loss.dat")
+        save_best_state(train_state, "train.dat", "test.dat")
+
     if isplot:
         plot_loss_history(losshistory)
         plot_best_state(train_state)
         plt.show()
 
-    if issave:
-        save_loss_history(losshistory, "loss.dat")
-        save_best_state(train_state, "train.dat", "test.dat")
-
 
 def plot_loss_history(losshistory):
-    loss_train = np.sum(
-        np.array(losshistory.loss_train) * losshistory.loss_weights, axis=1
-    )
-    loss_test = np.sum(
-        np.array(losshistory.loss_test) * losshistory.loss_weights, axis=1
-    )
+    loss_train = np.sum(losshistory.loss_train, axis=1)
+    loss_test = np.sum(losshistory.loss_test, axis=1)
 
     plt.figure()
     plt.semilogy(losshistory.steps, loss_train, label="Train loss")
@@ -54,31 +51,45 @@ def save_loss_history(losshistory, fname):
 def plot_best_state(train_state):
     X_train, y_train, X_test, y_test, best_y, best_ystd = train_state.packed_data()
 
-    y_dim = y_train.shape[1]
+    y_dim = best_y.shape[1]
 
     # Regression plot
-    plt.figure()
-    idx = np.argsort(X_test[:, 0])
-    X = X_test[idx, 0]
-    for i in range(y_dim):
-        plt.plot(X_train[:, 0], y_train[:, i], "ok", label="Train")
-        plt.plot(X, y_test[idx, i], "-k", label="True")
-        plt.plot(X, best_y[idx, i], "--r", label="Prediction")
-        if best_ystd is not None:
-            plt.plot(X, best_y[idx, i] + 2 * best_ystd[idx, i], "-b", label="95% CI")
-            plt.plot(X, best_y[idx, i] - 2 * best_ystd[idx, i], "-b")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.legend()
+    if X_test.shape[1] == 1:
+        idx = np.argsort(X_test[:, 0])
+        X = X_test[idx, 0]
+        plt.figure()
+        for i in range(y_dim):
+            if y_train is not None:
+                plt.plot(X_train[:, 0], y_train[:, i], "ok", label="Train")
+            if y_test is not None:
+                plt.plot(X, y_test[idx, i], "-k", label="True")
+            plt.plot(X, best_y[idx, i], "--r", label="Prediction")
+            if best_ystd is not None:
+                plt.plot(
+                    X, best_y[idx, i] + 2 * best_ystd[idx, i], "-b", label="95% CI"
+                )
+                plt.plot(X, best_y[idx, i] - 2 * best_ystd[idx, i], "-b")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.legend()
+    elif X_test.shape[1] == 2:
+        for i in range(y_dim):
+            plt.figure()
+            ax = plt.axes(projection=Axes3D.name)
+            ax.plot3D(X_test[:, 0], X_test[:, 1], best_y[:, i], ".")
+            ax.set_xlabel("$x_1$")
+            ax.set_ylabel("$x_2$")
+            ax.set_zlabel("$y_{}$".format(i + 1))
 
     # Residual plot
-    plt.figure()
-    residual = y_test[:, 0] - best_y[:, 0]
-    plt.plot(best_y[:, 0], residual, "o", zorder=1)
-    plt.hlines(0, plt.xlim()[0], plt.xlim()[1], linestyles="dashed", zorder=2)
-    plt.xlabel("Predicted")
-    plt.ylabel("Residual = Observed - Predicted")
-    plt.tight_layout()
+    if y_test is not None:
+        plt.figure()
+        residual = y_test[:, 0] - best_y[:, 0]
+        plt.plot(best_y[:, 0], residual, "o", zorder=1)
+        plt.hlines(0, plt.xlim()[0], plt.xlim()[1], linestyles="dashed", zorder=2)
+        plt.xlabel("Predicted")
+        plt.ylabel("Residual = Observed - Predicted")
+        plt.tight_layout()
 
     if best_ystd is not None:
         plt.figure()
@@ -96,11 +107,24 @@ def plot_best_state(train_state):
 def save_best_state(train_state, fname_train, fname_test):
     print("Saving training data to {} ...".format(fname_train))
     X_train, y_train, X_test, y_test, best_y, best_ystd = train_state.packed_data()
-    train = np.hstack((X_train, y_train))
-    np.savetxt(fname_train, train, header="x, y")
+    if y_train is None:
+        np.savetxt(fname_train, X_train, header="x")
+    else:
+        train = np.hstack((X_train, y_train))
+        np.savetxt(fname_train, train, header="x, y")
 
     print("Saving test data to {} ...".format(fname_test))
-    test = np.hstack((X_test, y_test, best_y))
-    if best_ystd is not None:
-        test = np.hstack((test, best_ystd))
-    np.savetxt(fname_test, test, header="x, y_true, y_pred, y_std")
+    if y_test is None:
+        test = np.hstack((X_test, best_y))
+        if best_ystd is None:
+            np.savetxt(fname_test, test, header="x, y_pred")
+        else:
+            test = np.hstack((test, best_ystd))
+            np.savetxt(fname_test, test, header="x, y_pred, y_std")
+    else:
+        test = np.hstack((X_test, y_test, best_y))
+        if best_ystd is None:
+            np.savetxt(fname_test, test, header="x, y_true, y_pred")
+        else:
+            test = np.hstack((test, best_ystd))
+            np.savetxt(fname_test, test, header="x, y_true, y_pred, y_std")

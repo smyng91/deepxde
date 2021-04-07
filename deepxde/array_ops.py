@@ -5,9 +5,9 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 from . import config
+from .backend import tf
 
 
 def istensor(value):
@@ -40,3 +40,22 @@ def hstack(tup):
         else:
             tup[0] = np.array([], dtype=config.real(np))
     return tf.concat(tup, 0) if istensor(tup[0]) else np.hstack(tup)
+
+
+def roll(a, shift, axis):
+    return tf.roll(a, shift, axis) if istensor(a) else np.roll(a, shift, axis=axis)
+
+
+def zero_padding(array, pad_width):
+    # SparseTensor
+    if isinstance(array, (list, tuple)) and len(array) == 3:
+        indices, values, dense_shape = array
+        indices = [(i + pad_width[0][0], j + pad_width[1][0]) for i, j in indices]
+        dense_shape = (
+            dense_shape[0] + sum(pad_width[0]),
+            dense_shape[1] + sum(pad_width[1]),
+        )
+        return indices, values, dense_shape
+    if istensor(array):
+        return tf.pad(array, tf.constant(pad_width))
+    return np.pad(array, pad_width)

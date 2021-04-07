@@ -3,38 +3,55 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 from . import activations
 from . import initializers
 from . import regularizers
 from .map import Map
 from .. import config
+from ..backend import tf
 from ..utils import timing
 
 
 class OpNN(Map):
-    """Operator neural networks.
+    """Deep operator network.
+
+    Args:
+        layer_size_branch: A list of integers as the width of a fully connected network, or `(dim, f)` where `dim` is
+            the input dimension and `f` is a network function. The width of the last layer in the branch and trunk net
+            should be equal.
+        layer_size_trunk (list): A list of integers as the width of a fully connected network.
+        activation: If `activation` is a ``string``, then the same activation is used in both trunk and branch nets.
+            If `activation` is a ``dict``, then the trunk net uses the activation `activation["trunk"]`,
+            and the branch net uses `activation["branch"]`.
+        trainable_branch: Boolean.
+        trainable_trunk: Boolean or a list of booleans.
     """
 
     def __init__(
         self,
-        layer_size_function,
-        layer_size_location,
+        layer_size_branch,
+        layer_size_trunk,
         activation,
         kernel_initializer,
         regularization=None,
         use_bias=True,
         stacked=False,
+        trainable_branch=True,
+        trainable_trunk=True,
     ):
-        if layer_size_function[-1] != layer_size_location[-1]:
-            raise ValueError(
-                "Output sizes of function NN and location NN do not match."
-            )
+        super(OpNN, self).__init__()
+        if isinstance(trainable_trunk, (list, tuple)):
+            if len(trainable_trunk) != len(layer_size_trunk) - 1:
+                raise ValueError("trainable_trunk does not match layer_size_trunk.")
 
-        self.layer_size_func = layer_size_function
-        self.layer_size_loc = layer_size_location
-        self.activation = activations.get(activation)
+        self.layer_size_func = layer_size_branch
+        self.layer_size_loc = layer_size_trunk
+        if isinstance(activation, dict):
+            self.activation_branch = activations.get(activation["branch"])
+            self.activation_trunk = activations.get(activation["trunk"])
+        else:
+            self.activation_branch = self.activation_trunk = activations.get(activation)
         self.kernel_initializer = initializers.get(kernel_initializer)
         if stacked:
             self.kernel_initializer_stacked = initializers.get(
@@ -43,10 +60,11 @@ class OpNN(Map):
         self.regularizer = regularizers.get(regularization)
         self.use_bias = use_bias
         self.stacked = stacked
+        self.trainable_branch = trainable_branch
+        self.trainable_trunk = trainable_trunk
 
         self._inputs = None
         self._X_func_default = None
-        super(OpNN, self).__init__()
 
     @property
     def inputs(self):
@@ -55,7 +73,7 @@ class OpNN(Map):
     @inputs.setter
     def inputs(self, value):
         if value[1] is not None:
-            raise ValueError("OpNN does not support setting location input.")
+            raise ValueError("OpNN does not support setting trunk net input.")
         self._X_func_default = value[0]
         self._inputs = self.X_loc
 
@@ -80,40 +98,64 @@ class OpNN(Map):
         self.X_loc = tf.placeholder(config.real(tf), [None, self.layer_size_loc[0]])
         self._inputs = [self.X_func, self.X_loc]
 
-        # Function NN
+        # Branch net to encode the input function
         y_func = self.X_func
-        if self.stacked:
-            # Stacked
+        if callable(self.layer_size_func[1]):
+            # User-defined network
+            y_func = self.layer_size_func[1](y_func)
+        elif self.stacked:
+            # Stacked fully connected network
             stack_size = self.layer_size_func[-1]
             for i in range(1, len(self.layer_size_func) - 1):
                 y_func = self.stacked_dense(
-                    y_func, self.layer_size_func[i], stack_size, self.activation
+                    y_func,
+                    self.layer_size_func[i],
+                    stack_size,
+                    activation=self.activation_branch,
+                    trainable=self.trainable_branch,
                 )
-            y_func = self.stacked_dense(y_func, 1, stack_size, use_bias=self.use_bias)
+            y_func = self.stacked_dense(
+                y_func,
+                1,
+                stack_size,
+                use_bias=self.use_bias,
+                trainable=self.trainable_branch,
+            )
         else:
-            # Unstacked
+            # Unstacked fully connected network
             for i in range(1, len(self.layer_size_func) - 1):
                 y_func = self.dense(
                     y_func,
                     self.layer_size_func[i],
-                    activation=self.activation,
+                    activation=self.activation_branch,
                     regularizer=self.regularizer,
+                    trainable=self.trainable_branch,
                 )
             y_func = self.dense(
-                y_func, self.layer_size_func[-1], use_bias=self.use_bias
+                y_func,
+                self.layer_size_func[-1],
+                use_bias=self.use_bias,
+                trainable=self.trainable_branch,
             )
 
-        # Location NN
+        # Trunk net to encode the domain of the output function
         y_loc = self.X_loc
         for i in range(1, len(self.layer_size_loc)):
             y_loc = self.dense(
                 y_loc,
                 self.layer_size_loc[i],
-                activation=self.activation,
+                activation=self.activation_trunk,
                 regularizer=self.regularizer,
+                trainable=self.trainable_trunk[i - 1]
+                if isinstance(self.trainable_trunk, (list, tuple))
+                else self.trainable_trunk,
             )
 
         # Dot product
+        if y_func.get_shape().as_list()[-1] != y_loc.get_shape().as_list()[-1]:
+            raise AssertionError(
+                "Output sizes of branch net and trunk net do not match."
+            )
         self.y = tf.einsum("bi,bi->b", y_func, y_loc)
         self.y = tf.expand_dims(self.y, axis=1)
         # Add bias
@@ -122,8 +164,17 @@ class OpNN(Map):
             self.y += b
 
         self.target = tf.placeholder(config.real(tf), [None, 1])
+        self.built = True
 
-    def dense(self, inputs, units, activation=None, use_bias=True, regularizer=None):
+    def dense(
+        self,
+        inputs,
+        units,
+        activation=None,
+        use_bias=True,
+        regularizer=None,
+        trainable=True,
+    ):
         return tf.layers.dense(
             inputs,
             units,
@@ -131,9 +182,12 @@ class OpNN(Map):
             use_bias=use_bias,
             kernel_initializer=self.kernel_initializer,
             kernel_regularizer=regularizer,
+            trainable=trainable,
         )
 
-    def stacked_dense(self, inputs, units, stack_size, activation=None, use_bias=True):
+    def stacked_dense(
+        self, inputs, units, stack_size, activation=None, use_bias=True, trainable=True
+    ):
         """Stacked densely-connected NN layer.
 
         Args:
@@ -152,24 +206,29 @@ class OpNN(Map):
         if len(shape) == 2:
             # NN input layer
             W = tf.Variable(
-                self.kernel_initializer_stacked([stack_size, input_dim, units])
+                self.kernel_initializer_stacked([stack_size, input_dim, units]),
+                trainable=trainable,
             )
             outputs = tf.einsum("bi,nij->bnj", inputs, W)
         elif units == 1:
             # NN output layer
-            W = tf.Variable(self.kernel_initializer_stacked([stack_size, input_dim]))
+            W = tf.Variable(
+                self.kernel_initializer_stacked([stack_size, input_dim]),
+                trainable=trainable,
+            )
             outputs = tf.einsum("bni,ni->bn", inputs, W)
         else:
             W = tf.Variable(
-                self.kernel_initializer_stacked([stack_size, input_dim, units])
+                self.kernel_initializer_stacked([stack_size, input_dim, units]),
+                trainable=trainable,
             )
             outputs = tf.einsum("bni,nij->bnj", inputs, W)
         if use_bias:
             if units == 1:
                 # NN output layer
-                b = tf.Variable(tf.zeros(stack_size))
+                b = tf.Variable(tf.zeros(stack_size), trainable=trainable)
             else:
-                b = tf.Variable(tf.zeros([stack_size, units]))
+                b = tf.Variable(tf.zeros([stack_size, units]), trainable=trainable)
             outputs += b
         if activation is not None:
             return activation(outputs)

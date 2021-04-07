@@ -1,4 +1,4 @@
-# DeepXDE ℒ
+# DeepXDE
 
 [![Build Status](https://travis-ci.org/lululxvi/deepxde.svg?branch=master)](https://travis-ci.org/lululxvi/deepxde)
 [![Documentation Status](https://readthedocs.org/projects/deepxde/badge/?version=latest)](https://deepxde.readthedocs.io/en/latest/?badge=latest)
@@ -9,35 +9,25 @@
 [![Conda Downloads](https://img.shields.io/conda/dn/conda-forge/deepxde.svg)](https://anaconda.org/conda-forge/deepxde)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/lululxvi/deepxde/blob/master/LICENSE)
 
-DeepXDE is a deep learning library for solving differential equations on top of [TensorFlow](https://www.tensorflow.org/).
+DeepXDE is a deep learning library on top of [TensorFlow](https://www.tensorflow.org/). Use DeepXDE if you need a deep learning library that
 
-Use DeepXDE if you need a deep learning library that
+- solves forward and inverse partial differential equations (PDEs) via physics-informed neural network (PINN),
+- solves forward and inverse integro-differential equations (IDEs) via PINN,
+- solves forward and inverse fractional partial differential equations (fPDEs) via fractional PINN (fPINN),
+- approximates functions from multi-fidelity data via multi-fidelity NN (MFNN),
+- approximates nonlinear operators via deep operator network (DeepONet),
+- approximates functions from a dataset with/without constraints.
 
-- solves partial differential equations (PDEs),
-- solves integro-differential equations (IDEs),
-- solves fractional partial differential equations (fPDEs),
-- solves inverse problems for differential equations,
-- approximates functions from a dataset with/without constraints,
-- approximates functions from multi-fidelity data,
-- approximates operators.
+**Documentation**: [ReadTheDocs](https://deepxde.readthedocs.io/), [SIAM Rev.](https://doi.org/10.1137/19M1274067), [Slides](https://lululxvi.github.io/files/talks/2020SIAMMDS_MS70.pdf), [Video](https://www.youtube.com/watch?v=Wfgr1pMA9fY&list=PL1e3Jic2_DwwJQ528agJYMEpA0oMaDSA9&index=13)
 
-DeepXDE is extensible to solve other problems in Scientific Machine Learning.
+**Papers on algorithms**
 
-**Documentation**: [ReadTheDocs](https://deepxde.readthedocs.io/), [short paper](https://ml4physicalsciences.github.io/files/NeurIPS_ML4PS_2019_2.pdf), [full paper](https://arxiv.org/abs/1907.04502), [slides](https://lululxvi.github.io/files/talks/2020PIML.pdf)
-
-**Papers**
-
-- Algorithms & examples
-
-    - Solving PDEs and IDEs: [short paper](https://ml4physicalsciences.github.io/files/NeurIPS_ML4PS_2019_2.pdf), [full paper](https://arxiv.org/abs/1907.04502), [slides](https://lululxvi.github.io/files/talks/2020PIML.pdf)
-    - Solving fPDEs: [SIAM J. Sci. Comput.](https://epubs.siam.org/doi/abs/10.1137/18M1229845)
-    - Solving stochastic PDEs: [J. Comput. Phys.](https://www.sciencedirect.com/science/article/pii/S0021999119305340)
-    - Multi-fidelity neural network: [arXiv](https://arxiv.org/abs/1903.00104)
-    - DeepONet to learn nonlinear operators: [arXiv](https://arxiv.org/abs/1910.03193)
-
-- Applications
-
-    - Inverse problems in nano-optics and metamaterials: [arXiv](https://arxiv.org/abs/1912.01085)
+- Solving PDEs and IDEs via PINN: [SIAM Rev.](https://doi.org/10.1137/19M1274067)
+- Solving fPDEs via fPINN: [SIAM J. Sci. Comput.](https://epubs.siam.org/doi/abs/10.1137/18M1229845)
+- Solving stochastic PDEs via NN-arbitrary polynomial chaos (NN-aPC): [J. Comput. Phys.](https://www.sciencedirect.com/science/article/pii/S0021999119305340)
+- Solving inverse design/topology optimization: [arXiv](https://arxiv.org/abs/2102.04626)
+- Learning from multi-fidelity data via MFNN: [PNAS](https://www.pnas.org/content/117/13/7052)
+- Learning nonlinear operators via DeepONet: [Nat. Mach. Intell.](https://doi.org/10.1038/s42256-021-00302-5)
 
 ## Features
 
@@ -49,7 +39,7 @@ DeepXDE supports
 - time-dependent PDEs are solved as easily as time-independent ones by only adding initial conditions;
 - residual-based adaptive refinement (RAR);
 - uncertainty quantification using dropout;
-- two types of neural networks: fully connected neural network, and residual neural network;
+- two types of neural networks: (stacked/unstacked) fully connected neural network, and residual neural network;
 - many different losses, metrics, optimizers, learning rate schedules, initializations, regularizations, etc.;
 - useful techniques, such as dropout and batch normalization;
 - callbacks to monitor the internal states and statistics of the model during training;
@@ -59,9 +49,7 @@ All the components of DeepXDE are loosely coupled, and thus DeepXDE is well-stru
 
 ## Installation
 
-DeepXDE requires [TensorFlow 1](https://www.tensorflow.org/) to be installed.
-(Sorry, but DeepXDE does not support TensorFlow 2 yet.)
-Then, you can install DeepXDE itself.
+DeepXDE requires [TensorFlow](https://www.tensorflow.org/) to be installed. Then, you can install DeepXDE itself. If you use Python 2, you need to install DeepXDE using `pip`.
 
 - Install the stable version with `pip`:
 
@@ -83,29 +71,35 @@ $ git clone https://github.com/lululxvi/deepxde.git
 
 - Dependencies
 
-    - [Matplotlib](https://matplotlib.org/)
-    - [NumPy](http://www.numpy.org/)
-    - [SALib](http://salib.github.io/SALib/)
-    - [scikit-learn](https://scikit-learn.org)
-    - [SciPy](https://www.scipy.org/)
-    - [TensorFlow](https://www.tensorflow.org/)
+  - [Matplotlib](https://matplotlib.org/)
+  - [NumPy](http://www.numpy.org/)
+  - [SALib](http://salib.github.io/SALib/)
+  - [scikit-learn](https://scikit-learn.org)
+  - [SciPy](https://www.scipy.org/)
+  - [TensorFlow](https://www.tensorflow.org/)>=2.2.0
+
+## Explore more
+
+- [Examples](https://github.com/lululxvi/deepxde/tree/master/examples)
+- [FAQ](https://deepxde.readthedocs.io/en/latest/user/faq.html)
+- [Research papers used DeepXDE](https://deepxde.readthedocs.io/en/latest/user/research.html)
 
 ## Cite DeepXDE
 
 If you use DeepXDE for academic research, you are encouraged to cite the following paper:
 
 ```
-@article{lu2019deepxde,
-    author  = {Lu, Lu and Meng, Xuhui and Mao, Zhiping and Karniadakis, George E.},
-    title   = {{DeepXDE}: A deep learning library for solving differential equations},
-    journal = {arXiv preprint arXiv:1907.04502},
-    year    = {2019}
+@article{lu2021deepxde,
+  author  = {Lu, Lu and Meng, Xuhui and Mao, Zhiping and Karniadakis, George Em},
+  title   = {{DeepXDE}: A deep learning library for solving differential equations},
+  journal = {SIAM Review},
+  volume  = {63},
+  number  = {1},
+  pages   = {208-228},
+  year    = {2021},
+  doi     = {10.1137/19M1274067}
 }
 ```
-
-## Why this logo, ℒ?
-
-The art of Scientific Machine Learning with deep learning is to design Loss ℒ.
 
 ## Contributing to DeepXDE
 
@@ -114,8 +108,15 @@ First off, thanks for taking the time to contribute!
 - **Reporting bugs.** To report a bug, simply open an issue in the GitHub "Issues" section.
 - **Suggesting enhancements.** To submit an enhancement suggestion for DeepXDE, including completely new features and minor improvements to existing functionality, let us know by opening an issue.
 - **Pull requests.** If you made improvements to DeepXDE, fixed a bug, or had a new example, feel free to send us a pull-request.
-- **Questions.** To get help on how to use DeepXDE or its functionalities, you can as well open an issue.
+- **Asking questions.** To get help on how to use DeepXDE or its functionalities, you can as well open an issue.
+- **Answering questions.** If you know the answer to any question in the "Issues", you are welcomed to answer.
+
+## The Team
+
+DeepXDE was originally developed by [Lu Lu](https://lululxvi.github.io/) at the [CRUNCH group](https://www.brown.edu/research/projects/crunch/home) under the supervision of Prof. [George Karniadakis](https://www.brown.edu/research/projects/crunch/george-karniadakis), supported by [PhILMs](https://www.pnnl.gov/computing/philms/).
+
+DeepXDE is currently maintained by [Lu Lu](https://lululxvi.github.io/) with major contributions coming from several talented individuals in various forms and means. A non-exhaustive but growing list needs to mention: Shunyuan Mao, Qi Tang.
 
 ## License
 
-Apache license 2.0
+[Apache license 2.0](https://github.com/lululxvi/deepxde/blob/master/LICENSE)

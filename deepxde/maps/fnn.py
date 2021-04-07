@@ -4,19 +4,17 @@ from __future__ import print_function
 
 import math
 
-import tensorflow as tf
-
 from . import activations
 from . import initializers
 from . import regularizers
 from .map import Map
 from .. import config
+from ..backend import tf
 from ..utils import timing
 
 
 class FNN(Map):
-    """Feed-forward neural networks.
-    """
+    """Feed-forward neural networks."""
 
     def __init__(
         self,
@@ -27,14 +25,13 @@ class FNN(Map):
         dropout_rate=0,
         batch_normalization=None,
     ):
+        super(FNN, self).__init__()
         self.layer_size = layer_size
         self.activation = activations.get(activation)
         self.kernel_initializer = initializers.get(kernel_initializer)
         self.regularizer = regularizers.get(regularization)
         self.dropout_rate = dropout_rate
         self.batch_normalization = batch_normalization
-
-        super(FNN, self).__init__()
 
     @property
     def inputs(self):
@@ -54,6 +51,8 @@ class FNN(Map):
         self.x = tf.placeholder(config.real(tf), [None, self.layer_size[0]])
 
         y = self.x
+        if self._input_transform is not None:
+            y = self._input_transform(y)
         for i in range(len(self.layer_size) - 2):
             if self.batch_normalization is None:
                 y = self.dense(y, self.layer_size[i + 1], activation=self.activation)
@@ -66,13 +65,20 @@ class FNN(Map):
             if self.dropout_rate > 0:
                 y = tf.layers.dropout(y, rate=self.dropout_rate, training=self.dropout)
         self.y = self.dense(y, self.layer_size[-1])
+        if self._output_transform is not None:
+            self.y = self._output_transform(self.x, self.y)
 
         self.y_ = tf.placeholder(config.real(tf), [None, self.layer_size[-1]])
-
-    def outputs_modify(self, modify):
-        self.y = modify(self.inputs, self.outputs)
+        self.built = True
 
     def dense(self, inputs, units, activation=None, use_bias=True):
+        # Cannot directly replace tf.layers.dense() with tf.keras.layers.Dense() due to some differences.
+        # One difference is that tf.layers.dense() will add regularizer loss to the collection REGULARIZATION_LOSSES,
+        # but tf.keras.layers.Dense() will not. Hence, tf.losses.get_regularization_loss() cannot be used for
+        # tf.keras.layers.Dense().
+        # Ref:
+        #   - https://github.com/tensorflow/tensorflow/issues/21587
+        #   - https://www.tensorflow.org/guide/migrate
         return tf.layers.dense(
             inputs,
             units,

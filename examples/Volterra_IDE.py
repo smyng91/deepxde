@@ -4,9 +4,9 @@ from __future__ import print_function
 
 import matplotlib.pyplot as plt
 import numpy as np
-import tensorflow as tf
 
 import deepxde as dde
+from deepxde.backend import tf
 
 
 def main():
@@ -18,20 +18,17 @@ def main():
     def kernel(x, s):
         return np.exp(s - x)
 
-    def boundary(x, on_boundary):
-        return on_boundary and np.isclose(x[0], 0)
-
     def func(x):
         return np.exp(-x) * np.cosh(x)
 
-    geom = dde.geometry.Interval(0, 5)
-    bc = dde.DirichletBC(geom, func, boundary)
+    geom = dde.geometry.TimeDomain(0, 5)
+    ic = dde.IC(geom, func, lambda _, on_initial: on_initial)
 
     quad_deg = 20
     data = dde.data.IDE(
         geom,
         ide,
-        bc,
+        ic,
         quad_deg,
         kernel=kernel,
         num_domain=10,

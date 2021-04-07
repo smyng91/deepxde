@@ -3,12 +3,12 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 from .helper import one_function
 from .pde import PDE
 from .. import config
-from ..utils import run_if_any_none
+from ..backend import tf
+from ..utils import run_if_all_none
 
 
 class IDE(PDE):
@@ -22,35 +22,31 @@ class IDE(PDE):
 
     def __init__(
         self,
-        geom,
+        geometry,
         ide,
         bcs,
         quad_deg,
         kernel=None,
         num_domain=0,
         num_boundary=0,
-        train_distribution="random",
+        train_distribution="sobol",
         anchors=None,
-        func=None,
+        solution=None,
         num_test=None,
     ):
         self.kernel = kernel or one_function(1)
         self.quad_deg = quad_deg
         self.quad_x, self.quad_w = np.polynomial.legendre.leggauss(quad_deg)
 
-        self.train_x, self.train_y = None, None
-        self.test_x, self.test_y = None, None
-
         super(IDE, self).__init__(
-            geom,
-            1,
+            geometry,
             ide,
             bcs,
             num_domain=num_domain,
             num_boundary=num_boundary,
             train_distribution=train_distribution,
             anchors=anchors,
-            func=func,
+            solution=solution,
             num_test=num_test,
         )
 
@@ -62,12 +58,16 @@ class IDE(PDE):
             if not isinstance(f, (list, tuple)):
                 f = [f]
             f = [fi[bcs_start[-1] :] for fi in f]
-            losses = [loss(tf.zeros(tf.shape(fi)), fi) for fi in f]
+            losses = [
+                loss(tf.zeros(tf.shape(fi), dtype=config.real(tf)), fi) for fi in f
+            ]
 
             for i, bc in enumerate(self.bcs):
                 beg, end = bcs_start[i], bcs_start[i + 1]
                 error = bc.error(self.train_x, model.net.inputs, outputs, beg, end)
-                losses.append(loss(tf.zeros(tf.shape(error)), error))
+                losses.append(
+                    loss(tf.zeros(tf.shape(error), dtype=config.real(tf)), error)
+                )
             return losses
 
         def losses_test():
@@ -75,31 +75,30 @@ class IDE(PDE):
             f = self.pde(model.net.inputs, outputs, int_mat)
             if not isinstance(f, (list, tuple)):
                 f = [f]
-            return [loss(tf.zeros(tf.shape(fi)), fi) for fi in f] + [
-                tf.constant(0, dtype=config.real(tf)) for _ in self.bcs
-            ]
+            return [
+                loss(tf.zeros(tf.shape(fi), dtype=config.real(tf)), fi) for fi in f
+            ] + [tf.constant(0, dtype=config.real(tf)) for _ in self.bcs]
 
         return tf.cond(tf.equal(model.net.data_id, 0), losses_train, losses_test)
 
-    @run_if_any_none("train_x", "train_y")
+    @run_if_all_none("train_x", "train_y")
     def train_next_batch(self, batch_size=None):
-        self.train_x = self.train_points()
+        self.train_x_all = self.train_points()
         x_bc = self.bc_points()
-        x_quad = self.quad_points(self.train_x)
-        self.train_x = np.vstack((x_bc, self.train_x, x_quad))
-        self.train_y = self.func(self.train_x)
+        x_quad = self.quad_points(self.train_x_all)
+        self.train_x = np.vstack((x_bc, self.train_x_all, x_quad))
+        self.train_y = self.soln(self.train_x) if self.soln else None
         return self.train_x, self.train_y
 
-    @run_if_any_none("test_x", "test_y")
+    @run_if_all_none("test_x", "test_y")
     def test(self):
         if self.num_test is None:
-            self.test_x = self.train_x[sum(self.num_bcs) :]
-            self.test_y = self.train_y[sum(self.num_bcs) :]
+            self.test_x = self.train_x_all
         else:
             self.test_x = self.test_points()
-            x_quad = self.quad_points(self.test_x)
-            self.test_x = np.vstack((self.test_x, x_quad))
-            self.test_y = self.func(self.test_x)
+        x_quad = self.quad_points(self.test_x)
+        self.test_x = np.vstack((self.test_x, x_quad))
+        self.test_y = self.soln(self.test_x) if self.soln else None
         return self.test_x, self.test_y
 
     def quad_points(self, X):
@@ -119,9 +118,7 @@ class IDE(PDE):
             num_bc = 0
             X = self.test_x
         if training or self.num_test is None:
-            num_f = self.num_domain + self.num_boundary
-            if self.anchors is not None:
-                num_f += len(self.anchors)
+            num_f = len(self.train_x_all)
         else:
             num_f = self.num_test
 

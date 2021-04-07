@@ -3,9 +3,9 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 import deepxde as dde
+from deepxde.backend import tf
 
 
 def gen_traindata():
@@ -25,12 +25,10 @@ def main():
 
     def pde(x, y):
         ca, cb = y[:, 0:1], y[:, 1:2]
-        ca_x = tf.gradients(ca, x)[0]
-        dca_x, dca_t = ca_x[:, 0:1], ca_x[:, 1:2]
-        dca_xx = tf.gradients(dca_x, x)[0][:, 0:1]
-        cb_x = tf.gradients(cb, x)[0]
-        dcb_x, dcb_t = cb_x[:, 0:1], cb_x[:, 1:2]
-        dcb_xx = tf.gradients(dcb_x, x)[0][:, 0:1]
+        dca_t = dde.grad.jacobian(y, x, i=0, j=1)
+        dca_xx = dde.grad.hessian(y, x, component=0, i=0, j=0)
+        dcb_t = dde.grad.jacobian(y, x, i=1, j=1)
+        dcb_xx = dde.grad.hessian(y, x, component=1, i=0, j=0)
         eq_a = dca_t - 1e-3 * D * dca_xx + kf * ca * cb ** 2
         eq_b = dcb_t - 1e-3 * D * dcb_xx + 2 * kf * ca * cb ** 2
         return [eq_a, eq_b]
@@ -55,17 +53,11 @@ def main():
     ic2 = dde.IC(geomtime, fun_init, lambda _, on_initial: on_initial, component=1)
 
     observe_x, Ca, Cb = gen_traindata()
-    ptset = dde.bc.PointSet(observe_x)
-    observe_y1 = dde.DirichletBC(
-        geomtime, ptset.values_to_func(Ca), lambda x, _: ptset.inside(x), component=0
-    )
-    observe_y2 = dde.DirichletBC(
-        geomtime, ptset.values_to_func(Cb), lambda x, _: ptset.inside(x), component=1
-    )
+    observe_y1 = dde.PointSetBC(observe_x, Ca, component=0)
+    observe_y2 = dde.PointSetBC(observe_x, Cb, component=1)
 
     data = dde.data.TimePDE(
         geomtime,
-        2,
         pde,
         [bc_a, bc_b, ic1, ic2, observe_y1, observe_y2],
         num_domain=2000,

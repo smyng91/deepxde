@@ -11,14 +11,14 @@ with open("requirements.txt", "r") as f:
 
 setup(
     name="DeepXDE",
-    version="0.4.0",
+    version="0.10.0",
     description="Deep learning library for solving differential equations",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Lu Lu",
     author_email="lululxvi@gmail.com",
     url="https://github.com/lululxvi/deepxde",
-    download_url="https://github.com/lululxvi/deepxde/tarball/v0.4.0",
+    download_url="https://github.com/lululxvi/deepxde/tarball/v0.10.0",
     license="Apache-2.0",
     install_requires=install_requires,
     classifiers=[
@@ -32,6 +32,7 @@ setup(
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Scientific/Engineering :: Mathematics",

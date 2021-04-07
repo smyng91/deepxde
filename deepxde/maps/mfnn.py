@@ -2,13 +2,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow as tf
-
 from . import activations
 from . import initializers
 from . import regularizers
 from .map import Map
 from .. import config
+from ..backend import tf
 from ..utils import timing
 
 
@@ -27,6 +26,7 @@ class MfNN(Map):
         trainable_low_fidelity=True,
         trainable_high_fidelity=True,
     ):
+        super(MfNN, self).__init__()
         self.layer_size_lo = layer_size_low_fidelity
         self.layer_size_hi = layer_size_high_fidelity
         self.activation = activations.get(activation)
@@ -35,8 +35,6 @@ class MfNN(Map):
         self.residue = residue
         self.trainable_lo = trainable_low_fidelity
         self.trainable_hi = trainable_high_fidelity
-
-        super(MfNN, self).__init__()
 
     @property
     def inputs(self):
@@ -107,6 +105,7 @@ class MfNN(Map):
 
         self.target_lo = tf.placeholder(config.real(tf), [None, self.layer_size_lo[-1]])
         self.target_hi = tf.placeholder(config.real(tf), [None, self.layer_size_hi[-1]])
+        self.built = True
 
     def dense(
         self,

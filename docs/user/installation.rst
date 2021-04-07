@@ -1,9 +1,7 @@
 Installation
 ============
 
-DeepXDE requires `TensorFlow 1 <https://www.tensorflow.org/>`_ to be installed.
-(Sorry, but DeepXDE does not support TensorFlow 2 yet.)
-Then, you can install DeepXDE itself.
+DeepXDE requires `TensorFlow <https://www.tensorflow.org/>`_ to be installed. Then, you can install DeepXDE itself. If you use Python 2, you need to install DeepXDE using ``pip``.
 
 - Install the stable version with ``pip``::
 
@@ -24,4 +22,4 @@ Then, you can install DeepXDE itself.
     - `SALib <http://salib.github.io/SALib/>`_
     - `scikit-learn <https://scikit-learn.org>`_
     - `SciPy <https://www.scipy.org/>`_
-    - `TensorFlow <https://www.tensorflow.org/>`_
+    - `TensorFlow <https://www.tensorflow.org/>`_>=2.2.0

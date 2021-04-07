@@ -3,7 +3,6 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 import deepxde as dde
 
@@ -19,24 +18,22 @@ def gen_testdata():
 
 def main():
     def pde(x, y):
-        dy_x = tf.gradients(y, x)[0]
-        dy_x, dy_t = dy_x[:, 0:1], dy_x[:, 1:2]
-        dy_xx = tf.gradients(dy_x, x)[0][:, 0:1]
+        dy_x = dde.grad.jacobian(y, x, i=0, j=0)
+        dy_t = dde.grad.jacobian(y, x, i=0, j=1)
+        dy_xx = dde.grad.hessian(y, x, i=0, j=0)
         return dy_t + y * dy_x - 0.01 / np.pi * dy_xx
 
     geom = dde.geometry.Interval(-1, 1)
     timedomain = dde.geometry.TimeDomain(0, 0.99)
     geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
-    bc = dde.DirichletBC(
-        geomtime, lambda x: np.zeros((len(x), 1)), lambda _, on_boundary: on_boundary
-    )
+    bc = dde.DirichletBC(geomtime, lambda x: 0, lambda _, on_boundary: on_boundary)
     ic = dde.IC(
         geomtime, lambda x: -np.sin(np.pi * x[:, 0:1]), lambda _, on_initial: on_initial
     )
 
     data = dde.data.TimePDE(
-        geomtime, 1, pde, [bc, ic], num_domain=2540, num_boundary=80, num_initial=160
+        geomtime, pde, [bc, ic], num_domain=2540, num_boundary=80, num_initial=160
     )
     net = dde.maps.FNN([2] + [20] * 3 + [1], "tanh", "Glorot normal")
     model = dde.Model(data, net)

@@ -20,9 +20,11 @@ class Hypercube(Geometry):
             raise ValueError("xmin >= xmax")
 
         self.xmin, self.xmax = np.array(xmin), np.array(xmax)
+        self.side_length = self.xmax - self.xmin
         super(Hypercube, self).__init__(
-            len(xmin), (self.xmin, self.xmax), np.linalg.norm(self.xmax - self.xmin)
+            len(xmin), (self.xmin, self.xmax), np.linalg.norm(self.side_length)
         )
+        self.volume = np.prod(self.side_length)
 
     def inside(self, x):
         return np.all(x >= self.xmin) and np.all(x <= self.xmax)
@@ -44,14 +46,15 @@ class Hypercube(Geometry):
         return n
 
     def uniform_points(self, n, boundary=True):
-        n1 = int(np.ceil(n ** (1 / self.dim)))
+        dx = (self.volume / n) ** (1 / self.dim)
         xi = []
         for i in range(self.dim):
+            ni = int(np.ceil(self.side_length[i] / dx))
             if boundary:
-                xi.append(np.linspace(self.xmin[i], self.xmax[i], num=n1))
+                xi.append(np.linspace(self.xmin[i], self.xmax[i], num=ni))
             else:
                 xi.append(
-                    np.linspace(self.xmin[i], self.xmax[i], num=n1 + 1, endpoint=False)[
+                    np.linspace(self.xmin[i], self.xmax[i], num=ni + 1, endpoint=False)[
                         1:
                     ]
                 )
@@ -106,6 +109,11 @@ class Hypersphere(Geometry):
     def mindist2boundary(self, x):
         return np.amin(self.radius - np.linalg.norm(x - self.center, axis=1))
 
+    def boundary_normal(self, x):
+        n = x - self.center
+        l = np.linalg.norm(n)
+        return n / l if np.isclose(l, self.radius) else np.zeros(self.dim)
+
     def random_points(self, n, random="pseudo"):
         """https://math.stackexchange.com/questions/87230/picking-random-points-in-the-volume-of-sphere-with-uniform-probability
         """
@@ -113,7 +121,8 @@ class Hypersphere(Geometry):
             U = np.random.rand(n, 1)
             X = np.random.normal(size=(n, self.dim))
         elif random == "sobol":
-            rng = sobol_sequence.sample(n + 1, self.dim + 1)[1:]
+            # Remove the first point [0, 0, ...] and the second point [0.5, 0.5, ...]
+            rng = sobol_sequence.sample(n + 2, self.dim + 1)[2:]
             U, X = rng[:, 0:1], rng[:, 1:]
             X = stats.norm.ppf(X)
         X = preprocessing.normalize(X)
@@ -126,7 +135,8 @@ class Hypersphere(Geometry):
         if random == "pseudo":
             X = np.random.normal(size=(n, self.dim))
         elif random == "sobol":
-            U = sobol_sequence.sample(n + 1, self.dim)[1:]
+            # Remove the first point [0, 0, ...] and the second point [0.5, 0.5, ...]
+            U = sobol_sequence.sample(n + 2, self.dim)[2:]
             X = stats.norm.ppf(U)
         X = preprocessing.normalize(X)
         return self.radius * X + self.center

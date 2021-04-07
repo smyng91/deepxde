@@ -3,11 +3,12 @@ from __future__ import division
 from __future__ import print_function
 
 import sys
+import time
 
 import numpy as np
-import tensorflow as tf
 
-from .utils import save_animation
+from . import gradients as grad
+from .utils import list_to_str, save_animation
 
 
 class Callback(object):
@@ -211,6 +212,34 @@ class EarlyStopping(Callback):
         return sum(self.model.train_state.loss_train)
 
 
+class Timer(Callback):
+    """Stop training when training time reaches the threshold.
+    This Timer starts after the first call of `on_train_begin`.
+
+    Args:
+        available_time (float): Total time (in minutes) available for the training.
+    """
+
+    def __init__(self, available_time):
+        super(Timer, self).__init__()
+
+        self.threshold = available_time * 60  # convert to seconds
+        self.t_start = None
+
+    def on_train_begin(self):
+        if self.t_start is None:
+            self.t_start = time.time()
+
+    def on_epoch_end(self):
+        if time.time() - self.t_start > self.threshold:
+            self.model.stop_training = True
+            print(
+                "\nStop training as time used up. time used: {:.1f} mins, epoch trained: {}".format(
+                    (time.time() - self.t_start) / 60, self.model.train_state.epoch
+                )
+            )
+
+
 class VariableValue(Callback):
     """Get the variable values.
 
@@ -221,12 +250,14 @@ class VariableValue(Callback):
         filename (string): Output the values to the file `filename`.
             The file is kept open to allow instances to be re-used.
             If ``None``, output to the screen.
+        precision (int): The precision of variables to display.
     """
 
-    def __init__(self, var_list, period=1, filename=None):
+    def __init__(self, var_list, period=1, filename=None, precision=2):
         super(VariableValue, self).__init__()
         self.var_list = var_list
         self.period = period
+        self.precision = precision
 
         self.file = sys.stdout if filename is None else open(filename, "w", buffering=1)
         self.value = None
@@ -241,7 +272,12 @@ class VariableValue(Callback):
         if self.epochs_since_last >= self.period:
             self.epochs_since_last = 0
             self.value = self.model.sess.run(self.var_list)
-            print(self.model.train_state.epoch, self.value, file=self.file)
+            print(
+                self.model.train_state.epoch,
+                list_to_str(self.value, precision=self.precision),
+                file=self.file,
+            )
+            self.file.flush()
 
     def get_value(self):
         """Return the variable values."""
@@ -268,7 +304,7 @@ class OperatorPredictor(Callback):
 
     def on_predict_end(self):
         self.value = self.model.sess.run(
-            self.tf_op, feed_dict=self.model.net.feed_dict(False, False, 2, self.x),
+            self.tf_op, feed_dict=self.model.net.feed_dict(False, False, 2, self.x)
         )
 
     def get_value(self):
@@ -284,9 +320,7 @@ class FirstDerivative(OperatorPredictor):
 
     def __init__(self, x, component_x=0, component_y=0):
         def first_derivative(x, y):
-            return tf.gradients(y[:, component_y : component_y + 1], x)[0][
-                :, component_x : component_x + 1
-            ]
+            return grad.jacobian(y, x, i=component_y, j=component_x)
 
         super(FirstDerivative, self).__init__(x, first_derivative)
 

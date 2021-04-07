@@ -3,15 +3,14 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 import deepxde as dde
+from deepxde.backend import tf
 
 
 def main():
     def ddy(x, y):
-        dy_x = tf.gradients(y, x)[0]
-        return tf.gradients(dy_x, x)[0]
+        return dde.grad.hessian(y, x)
 
     def dddy(x, y):
         return tf.gradients(ddy(x, y), x)[0]
@@ -27,24 +26,22 @@ def main():
         return on_boundary and np.isclose(x[0], 1)
 
     def func(x):
-        return -x ** 4 / 24 + x ** 3 / 6 - x ** 2 / 4
+        return -(x ** 4) / 24 + x ** 3 / 6 - x ** 2 / 4
 
     geom = dde.geometry.Interval(0, 1)
 
-    zero_func = lambda x: np.zeros((len(x), 1))
-    bc1 = dde.DirichletBC(geom, zero_func, boundary_l)
-    bc2 = dde.NeumannBC(geom, zero_func, boundary_l)
+    bc1 = dde.DirichletBC(geom, lambda x: 0, boundary_l)
+    bc2 = dde.NeumannBC(geom, lambda x: 0, boundary_l)
     bc3 = dde.OperatorBC(geom, lambda x, y, _: ddy(x, y), boundary_r)
     bc4 = dde.OperatorBC(geom, lambda x, y, _: dddy(x, y), boundary_r)
 
     data = dde.data.PDE(
         geom,
-        1,
         pde,
         [bc1, bc2, bc3, bc4],
         num_domain=10,
         num_boundary=2,
-        func=func,
+        solution=func,
         num_test=100,
     )
     layer_size = [1] + [20] * 3 + [1]

@@ -5,20 +5,31 @@ from __future__ import print_function
 import math
 
 import numpy as np
-import tensorflow as tf
 
-from . import config
-from . import array_ops
+from .pde import PDE
+from .. import array_ops
+from .. import config
+from ..backend import tf
+from ..utils import run_if_all_none
 
 
-class Discretization(object):
-    """Space discretization scheme parameters."""
+class Scheme(object):
+    """Fractional Laplacian discretization.
 
-    def __init__(self, dim, meshtype, resolution, nanchor):
-        self.dim = dim
-        self.meshtype, self.resolution = meshtype, resolution
-        self.nanchor = nanchor
+    Discretize fractional Laplacian uisng quadrature rule for the integral with respect to the directions
+    and Grunwald-Letnikov (GL) formula for the Riemann-Liouville directional fractional derivative.
 
+    Args:
+        meshtype (string): "static" or "dynamic".
+        resolution: A list of integer. The first number is the number of quadrature points in the first direction, ...,
+            and the last number is the GL parameter.
+    """
+
+    def __init__(self, meshtype, resolution):
+        self.meshtype = meshtype
+        self.resolution = resolution
+
+        self.dim = len(resolution)
         self._check()
 
     def _check(self):
@@ -28,11 +39,285 @@ class Discretization(object):
             raise ValueError(
                 "Do not support meshtype static for dimension %d" % self.dim
             )
-        if self.dim != len(self.resolution):
-            raise ValueError(
-                "Resolution %s does not math dimension %d."
-                % (self.resolution, self.dim)
+
+
+class FPDE(PDE):
+    """Fractional PDE solver.
+
+    D-dimensional fractional Laplacian of order alpha/2 (1 < alpha < 2) is defined as:
+    (-Delta)^(alpha/2) u(x) = C(alpha, D) \int_{||theta||=1} D_theta^alpha u(x) d theta,
+    where C(alpha, D) = gamma((1-alpha)/2) * gamma((D+alpha)/2) / (2 pi^((D+1)/2)),
+    D_theta^alpha is the Riemann-Liouville directional fractional derivative,
+    and theta is the differentiation direction vector.
+    The solution u(x) is assumed to be identically zero in the boundary and exterior of the domain.
+    When D = 1, C(alpha, D) = 1 / (2 cos(alpha * pi / 2)).
+
+    This solver does not consider C(alpha, D) in the fractional Laplacian,
+    and only discretizes \int_{||theta||=1} D_theta^alpha u(x) d theta.
+    D_theta^alpha is approximated by Grunwald-Letnikov formula.
+    """
+
+    def __init__(
+        self,
+        geometry,
+        fpde,
+        alpha,
+        bcs,
+        resolution,
+        meshtype="dynamic",
+        num_domain=0,
+        num_boundary=0,
+        train_distribution="sobol",
+        anchors=None,
+        solution=None,
+        num_test=None,
+    ):
+        self.alpha = alpha
+        self.disc = Scheme(meshtype, resolution)
+        self.frac_train, self.frac_test = None, None
+
+        super(FPDE, self).__init__(
+            geometry,
+            fpde,
+            bcs,
+            num_domain=num_domain,
+            num_boundary=num_boundary,
+            train_distribution=train_distribution,
+            anchors=anchors,
+            solution=solution,
+            num_test=num_test,
+        )
+
+    def losses(self, targets, outputs, loss, model):
+        def losses_train():
+            bcs_start = np.cumsum([0] + self.num_bcs)
+            int_mat = self.get_int_matrix(True)
+            f = self.pde(model.net.inputs, outputs, int_mat)
+            if not isinstance(f, (list, tuple)):
+                f = [f]
+            f = [fi[bcs_start[-1] :] for fi in f]
+            losses = [
+                loss(tf.zeros(tf.shape(fi), dtype=config.real(tf)), fi) for fi in f
+            ]
+
+            for i, bc in enumerate(self.bcs):
+                beg, end = bcs_start[i], bcs_start[i + 1]
+                error = bc.error(self.train_x, model.net.inputs, outputs, beg, end)
+                losses.append(
+                    loss(tf.zeros(tf.shape(error), dtype=config.real(tf)), error)
+                )
+            return losses
+
+        def losses_test():
+            int_mat = self.get_int_matrix(False)
+            f = self.pde(model.net.inputs, outputs, int_mat)
+            if not isinstance(f, (list, tuple)):
+                f = [f]
+            return [
+                loss(tf.zeros(tf.shape(fi), dtype=config.real(tf)), fi) for fi in f
+            ] + [tf.constant(0, dtype=config.real(tf)) for _ in self.bcs]
+
+        return tf.cond(tf.equal(model.net.data_id, 0), losses_train, losses_test)
+
+    @run_if_all_none("train_x", "train_y")
+    def train_next_batch(self, batch_size=None):
+        if self.disc.meshtype == "static":
+            if self.geom.idstr != "Interval":
+                raise ValueError("Only Interval supports static mesh.")
+
+            self.frac_train = Fractional(self.alpha, self.geom, self.disc, None)
+            X = self.frac_train.get_x()
+            # FPDE is only applied to the domain points.
+            # Boundary points are auxiliary points, and appended in the end.
+            X = np.roll(X, -1)
+            self.train_x_all = X
+            if self.anchors is not None:
+                self.train_x_all = np.vstack((self.anchors, self.train_x_all))
+            x_bc = self.bc_points()
+        elif self.disc.meshtype == "dynamic":
+            self.train_x_all = self.train_points()
+            x_bc = self.bc_points()
+            # FPDE is only applied to the domain points.
+            x_f = self.train_x_all[
+                [not self.geom.on_boundary(x) for x in self.train_x_all]
+            ]
+            self.frac_train = Fractional(self.alpha, self.geom, self.disc, x_f)
+            X = self.frac_train.get_x()
+
+        self.train_x = np.vstack((x_bc, X))
+        self.train_y = self.soln(self.train_x) if self.soln else None
+        return self.train_x, self.train_y
+
+    @run_if_all_none("test_x", "test_y")
+    def test(self):
+        if self.disc.meshtype == "static" and self.num_test is not None:
+            raise ValueError("Cannot use test points in static mesh.")
+
+        if self.num_test is None:
+            self.test_x = self.train_x[sum(self.num_bcs) :]
+            self.frac_test = self.frac_train
+        else:
+            self.test_x = self.test_points()
+            x_f = self.test_x[[not self.geom.on_boundary(x) for x in self.test_x]]
+            self.frac_test = Fractional(self.alpha, self.geom, self.disc, x_f)
+            self.test_x = self.frac_test.get_x()
+        self.test_y = self.soln(self.test_x) if self.soln else None
+        return self.test_x, self.test_y
+
+    def get_int_matrix(self, training):
+        if training:
+            int_mat = self.frac_train.get_matrix(sparse=True)
+            num_bc = sum(self.num_bcs)
+        else:
+            int_mat = self.frac_test.get_matrix(sparse=True)
+            num_bc = 0
+
+        if self.disc.meshtype == "static":
+            int_mat = array_ops.roll(int_mat, -1, 1)
+            int_mat = int_mat[1:-1]
+
+        int_mat = array_ops.zero_padding(int_mat, ((num_bc, 0), (num_bc, 0)))
+        return int_mat
+
+
+class TimeFPDE(FPDE):
+    """Time-dependent fractional PDE solver.
+
+    D-dimensional fractional Laplacian of order alpha/2 (1 < alpha < 2) is defined as:
+    (-Delta)^(alpha/2) u(x) = C(alpha, D) \int_{||theta||=1} D_theta^alpha u(x) d theta,
+    where C(alpha, D) = gamma((1-alpha)/2) * gamma((D+alpha)/2) / (2 pi^((D+1)/2)),
+    D_theta^alpha is the Riemann-Liouville directional fractional derivative,
+    and theta is the differentiation direction vector.
+    The solution u(x) is assumed to be identically zero in the boundary and exterior of the domain.
+    When D = 1, C(alpha, D) = 1 / (2 cos(alpha * pi / 2)).
+
+    This solver does not consider C(alpha, D) in the fractional Laplacian,
+    and only discretizes \int_{||theta||=1} D_theta^alpha u(x) d theta.
+    D_theta^alpha is approximated by Grunwald-Letnikov formula.
+    """
+
+    def __init__(
+        self,
+        geometryxtime,
+        fpde,
+        alpha,
+        ic_bcs,
+        resolution,
+        meshtype="dynamic",
+        num_domain=0,
+        num_boundary=0,
+        num_initial=0,
+        train_distribution="sobol",
+        anchors=None,
+        solution=None,
+        num_test=None,
+    ):
+        self.num_initial = num_initial
+        super(TimeFPDE, self).__init__(
+            geometryxtime,
+            fpde,
+            alpha,
+            ic_bcs,
+            resolution,
+            meshtype=meshtype,
+            num_domain=num_domain,
+            num_boundary=num_boundary,
+            train_distribution=train_distribution,
+            anchors=anchors,
+            solution=solution,
+            num_test=num_test,
+        )
+
+    @run_if_all_none("train_x", "train_y")
+    def train_next_batch(self, batch_size=None):
+        if self.disc.meshtype == "static":
+            if self.geom.geometry.idstr != "Interval":
+                raise ValueError("Only Interval supports static mesh.")
+
+            nt = int(round(self.num_domain / (self.disc.resolution[0] - 2))) + 1
+            self.frac_train = FractionalTime(
+                self.alpha,
+                self.geom.geometry,
+                self.geom.timedomain.t0,
+                self.geom.timedomain.t1,
+                self.disc,
+                nt,
+                None,
             )
+            X = self.frac_train.get_x()
+            self.train_x_all = X
+            if self.anchors is not None:
+                self.train_x_all = np.vstack((self.anchors, self.train_x_all))
+            x_bc = self.bc_points()
+            # Remove the initial and boundary points at the beginning of X,
+            # which are not considered in the integral matrix.
+            X = X[self.disc.resolution[0] + 2 * nt - 2 :, :]
+        elif self.disc.meshtype == "dynamic":
+            self.train_x_all = self.train_points()
+            x_bc = self.bc_points()
+            # FPDE is only applied to the non-boundary points.
+            x_f = self.train_x_all[
+                [not self.geom.on_boundary(x) for x in self.train_x_all]
+            ]
+            self.frac_train = FractionalTime(
+                self.alpha,
+                self.geom.geometry,
+                self.geom.timedomain.t0,
+                self.geom.timedomain.t1,
+                self.disc,
+                None,
+                x_f,
+            )
+            X = self.frac_train.get_x()
+
+        self.train_x = np.vstack((x_bc, X))
+        self.train_y = self.soln(self.train_x) if self.soln else None
+        return self.train_x, self.train_y
+
+    @run_if_all_none("test_x", "test_y")
+    def test(self):
+        if self.disc.meshtype == "static" and self.num_test is not None:
+            raise ValueError("Cannot use test points in static mesh.")
+
+        if self.num_test is None:
+            self.test_x = self.train_x[sum(self.num_bcs) :]
+            self.frac_test = self.frac_train
+        else:
+            self.test_x = self.test_points()
+            x_f = self.test_x[[not self.geom.on_boundary(x) for x in self.test_x]]
+            self.frac_test = FractionalTime(
+                self.alpha,
+                self.geom.geometry,
+                self.geom.timedomain.t0,
+                self.geom.timedomain.t1,
+                self.disc,
+                None,
+                x_f,
+            )
+            self.test_x = self.frac_test.get_x()
+        self.test_y = self.soln(self.test_x) if self.soln else None
+        return self.test_x, self.test_y
+
+    def train_points(self):
+        X = super(TimeFPDE, self).train_points()
+        if self.num_initial > 0:
+            if self.train_distribution == "uniform":
+                tmp = self.geom.uniform_initial_points(self.num_initial)
+            else:
+                tmp = self.geom.random_initial_points(self.num_initial, random="sobol")
+            X = np.vstack((tmp, X))
+        return X
+
+    def get_int_matrix(self, training):
+        if training:
+            int_mat = self.frac_train.get_matrix(sparse=True)
+            num_bc = sum(self.num_bcs)
+        else:
+            int_mat = self.frac_test.get_matrix(sparse=True)
+            num_bc = 0
+
+        int_mat = array_ops.zero_padding(int_mat, ((num_bc, 0), (num_bc, 0)))
+        return int_mat
 
 
 class Fractional(object):
@@ -47,7 +332,7 @@ class Fractional(object):
         if (disc.meshtype == "static" and x0 is not None) or (
             disc.meshtype == "dynamic" and x0 is None
         ):
-            raise ValueError("disc.meshtype and x0 do not match")
+            raise ValueError("disc.meshtype and x0 do not match.")
 
         self.alpha, self.geom = alpha, geom
         self.disc, self.x0 = disc, x0
@@ -103,7 +388,7 @@ class Fractional(object):
 
     def get_x_dynamic(self):
         if any(map(self.geom.on_boundary, self.x0)):
-            raise ValueError("x0 contains boundary points")
+            raise ValueError("x0 contains boundary points.")
         if self.geom.dim == 1:
             dirns, dirn_w = [-1, 1], [1, 1]
         elif self.geom.dim == 2:
@@ -131,17 +416,21 @@ class Fractional(object):
             dirn_w = np.pi ** 2 / 2 * np.array(dirn_w)
         x, self.w = [], []
         for x0i in self.x0:
-            xi = map(
-                lambda dirn: self.geom.background_points(
-                    x0i, dirn, self.dynamic_dist2npts, 0
-                ),
-                dirns,
+            xi = list(
+                map(
+                    lambda dirn: self.geom.background_points(
+                        x0i, dirn, self.dynamic_dist2npts, 0
+                    ),
+                    dirns,
+                )
             )
-            wi = map(
-                lambda i: dirn_w[i]
-                * np.linalg.norm(xi[i][1] - xi[i][0]) ** (-self.alpha)
-                * self.get_weight(len(xi[i]) - 1),
-                range(len(dirns)),
+            wi = list(
+                map(
+                    lambda i: dirn_w[i]
+                    * np.linalg.norm(xi[i][1] - xi[i][0]) ** (-self.alpha)
+                    * self.get_weight(len(xi[i]) - 1),
+                    range(len(dirns)),
+                )
             )
             # first order
             xi, wi = zip(*map(self.modify_first_order, xi, wi))
@@ -151,7 +440,9 @@ class Fractional(object):
             # xi, wi = zip(*map(self.modify_third_order, xi, wi))
             x.append(np.vstack(xi))
             self.w.append(array_ops.hstack(wi))
-        self.xindex_start = np.hstack(([0], np.cumsum(map(len, x)))) + len(self.x0)
+        self.xindex_start = np.hstack(([0], np.cumsum(list(map(len, x))))) + len(
+            self.x0
+        )
         return np.vstack([self.x0] + x)
 
     def modify_first_order(self, x, w):
@@ -280,7 +571,7 @@ class Fractional(object):
 
 
 class FractionalTime(object):
-    """Fractional derivative with time
+    """Fractional derivative with time.
 
     Args:
         nt: If ``disc.meshtype = static``, then nt is the number of t points;
@@ -316,7 +607,7 @@ class FractionalTime(object):
         )
 
     def get_x_static(self):
-        # Points are reordered: boundary --> inside
+        # Points are ordered as initial --> boundary --> inside
         x = self.geom.uniform_points(self.disc.resolution[0], True)
         x = np.roll(x, 1)[:, 0]
         dt = (self.tmax - self.tmin) / (self.nt - 1)
@@ -348,6 +639,7 @@ class FractionalTime(object):
         return x
 
     def get_matrix_static(self):
+        # Only consider the inside points
         print("Warning: assume zero boundary condition.")
         n = (self.disc.resolution[0] - 2) * (self.nt - 1)
         int_mat = np.zeros((n, n), dtype=config.real(np))

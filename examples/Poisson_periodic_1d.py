@@ -3,15 +3,14 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-import tensorflow as tf
 
 import deepxde as dde
+from deepxde.backend import tf
 
 
 def main():
     def pde(x, y):
-        dy_x = tf.gradients(y, x)[0]
-        dy_xx = tf.gradients(dy_x, x)[0]
+        dy_xx = dde.grad.hessian(y, x)
         return -dy_xx - np.pi ** 2 * tf.sin(np.pi * x)
 
     def boundary_l(x, on_boundary):
@@ -26,7 +25,7 @@ def main():
     geom = dde.geometry.Interval(-1, 1)
     bc1 = dde.DirichletBC(geom, func, boundary_l)
     bc2 = dde.PeriodicBC(geom, 0, boundary_r)
-    data = dde.data.PDE(geom, 1, pde, [bc1, bc2], 16, 2, func=func, num_test=100)
+    data = dde.data.PDE(geom, pde, [bc1, bc2], 16, 2, solution=func, num_test=100)
 
     layer_size = [1] + [50] * 3 + [1]
     activation = "tanh"
